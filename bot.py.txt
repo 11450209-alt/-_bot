@@ -1,0 +1,114 @@
+import discord
+from discord.ext import commands
+import random
+import asyncio
+import hashlib
+
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+games = {}
+
+def create_deck():
+    suits = ["♠", "♥", "♦", "♣"]
+    ranks = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"]
+    return [f"{r}{s}" for s in suits for r in ranks]
+
+def card_value(card):
+    r = card[:-1]
+    if r in ["J","Q","K"]:
+        return 10
+    if r == "A":
+        return 11
+    return int(r)
+
+def hand_value(hand):
+    v = sum(card_value(c) for c in hand)
+    aces = sum(1 for c in hand if c[:-1] == "A")
+    while v > 21 and aces:
+        v -= 10
+        aces -= 1
+    return v
+
+@bot.event
+async def on_ready():
+    print(f"法國賭神上線：{bot.user}")
+
+@bot.command()
+async def 撲克牌(ctx):
+    await ctx.send("你確定要玩？")
+
+@bot.command()
+async def 開始(ctx):
+    await ctx.send("我要驗排")
+    await asyncio.sleep(1)
+
+    deck = create_deck()
+    random.shuffle(deck)
+
+    deck_hash = hashlib.sha256("".join(deck).encode()).hexdigest()
+    print("Deck hash:", deck_hash)
+
+    await ctx.send("牌沒問題")
+    await asyncio.sleep(0.5)
+    await ctx.send("坐好。")
+
+    player = [deck.pop(), deck.pop()]
+    dealer = [deck.pop(), deck.pop()]
+
+    games[ctx.author.id] = {
+        "deck": deck,
+        "player": player,
+        "dealer": dealer
+    }
+
+    await ctx.send(
+        f"你的牌：{player}（{hand_value(player)}）\n"
+        f"我的牌：[{dealer[0]}, ?]"
+    )
+
+@bot.command()
+async def 要牌(ctx):
+    g = games.get(ctx.author.id)
+    if not g:
+        return
+
+    g["player"].append(g["deck"].pop())
+    v = hand_value(g["player"])
+
+    await ctx.send(random.choice(["太急了。", "果然。", "你確定？"]))
+    await ctx.send(f"你的牌：{g['player']}（{v}）")
+
+    if v > 21:
+        await ctx.send("21 點不是給你的。")
+        del games[ctx.author.id]
+
+@bot.command()
+async def 停牌(ctx):
+    g = games.get(ctx.author.id)
+    if not g:
+        return
+
+    dealer = g["dealer"]
+    deck = g["deck"]
+
+    await asyncio.sleep(2)
+
+    while hand_value(dealer) < 17:
+        dealer.append(deck.pop())
+        await asyncio.sleep(1)
+
+    pv = hand_value(g["player"])
+    dv = hand_value(dealer)
+
+    await ctx.send(f"我的牌：{dealer}（{dv}）")
+
+    if dv > 21 or pv > dv:
+        await ctx.send("嗯。\n今天不是你的問題。")
+    else:
+        await ctx.send("正常。\n再來一把，結果一樣。")
+
+    del games[ctx.author.id]
+
+bot.run(discord.utils.get_env("DISCORD_TOKEN"))
