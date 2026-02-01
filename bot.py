@@ -1,65 +1,45 @@
 import discord
+from discord.ext import commands
 import os
 import random
-import asyncio
-
-TOKEN = os.getenv("TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 
 intents = discord.Intents.default()
 intents.message_content = True
-client = discord.Client(intents=intents)
 
-deck = []
-playing = False
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-@client.event
+allowed_channel = int(os.environ["CHANNEL_ID"])
+
+cards = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
+
+@bot.event
 async def on_ready():
-    print("🇫🇷 法國賭神已上線")
+    print(f"{bot.user} 已上線")
 
-@client.event
+@bot.event
 async def on_message(message):
-    global deck, playing
-
     if message.author.bot:
         return
 
-    if message.channel.id != CHANNEL_ID:
+    if message.channel.id != allowed_channel:
         return
 
-    msg = message.content.strip()
+    content = message.content.strip()
 
-    if msg == "開始":
-        if playing:
-            await message.channel.send("牌桌已開，你還想再開？")
-            return
-        await message.channel.send("要玩？我先說一句。")
-        await asyncio.sleep(1)
-        await message.channel.send("我要驗排")
-        return
-
-    if msg == "我要驗排" and not playing:
-        deck = [i for i in range(1, 14)] * 4
-        random.shuffle(deck)
-        await asyncio.sleep(1)
+    if content == "開始玩":
+        await message.channel.send("我要驗牌")
         await message.channel.send("牌沒問題")
-        await asyncio.sleep(1)
-        await message.channel.send("來，開始。")
-        playing = True
-        return
+        player = random.choice(cards)
+        dealer = random.choice(cards)
+        await message.channel.send(f"你抽到的是 {player}")
+        await message.channel.send(f"我抽到的是 {dealer}")
+        if cards.index(player) > cards.index(dealer):
+            await message.channel.send("呵，看來這一把是你贏了。但我可是法國賭神。")
+        elif cards.index(player) < cards.index(dealer):
+            await message.channel.send("勝負已分。法國賭神從不失手。")
+        else:
+            await message.channel.send("平手？命運在嘲笑我們。")
 
-    if msg == "抽牌" and playing:
-        if not deck:
-            await message.channel.send("沒牌了，今天不適合再玩。")
-            playing = False
-            return
-        card = deck.pop()
-        await message.channel.send(f"你抽到：{card}")
-        return
+    await bot.process_commands(message)
 
-    if msg == "結束":
-        playing = False
-        await message.channel.send("散桌。記住，是我放你走的。")
-        return
-
-client.run(TOKEN)
+bot.run(os.environ["TOKEN"])
