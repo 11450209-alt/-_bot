@@ -35,7 +35,7 @@ humiliate = [
     "輸成這樣你還敢再玩？",
     "你剛剛那局真的很好笑",
     "我會記住你的名字，當反面教材",
-    "給我猜皮鞋"
+    "給我擦皮鞋"
 ]
 
 @bot.event
@@ -153,6 +153,7 @@ async def on_message(message):
         await message.channel.send("平手也不代表你很強")
 
 bot.run(TOKEN)
+
 
 
 
