@@ -1,139 +1,108 @@
+import os
+import re
+import random
 import discord
 from discord.ext import commands
-import os
-import json
-import random
-import asyncio
 
-TOKEN = os.environ["TOKEN"]
-CHANNEL_ID = int(os.environ["CHANNEL_ID"])
-OWNER_ID = int(os.environ["OWNER_ID"])
+TOKEN = os.getenv("TOKEN")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+OWNER_ID = int(os.getenv("OWNER_ID"))
 
 intents = discord.Intents.default()
 intents.message_content = True
+bot = commands.Bot(command_prefix="", intents=intents)
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+players = {}
+loss_board = {}
 
-money = {}
-table = set()
-current_game = False
-loser_count = {}
+def get_money(uid):
+    return players.get(uid, 100)
 
-def load_money():
-    global money
-    if os.path.exists("money.json"):
-        with open("money.json", "r", encoding="utf-8") as f:
-            money = json.load(f)
+def add_money(uid, amount):
+    players[uid] = get_money(uid) + amount
 
-def save_money():
-    with open("money.json", "w", encoding="utf-8") as f:
-        json.dump(money, f, ensure_ascii=False)
+def record_loss(uid, amount):
+    loss_board[uid] = loss_board.get(uid, 0) + amount
+
+def draw_card():
+    return random.randint(1, 11)
 
 @bot.event
 async def on_ready():
-    load_money()
-    print("法國賭神已上線")
+    print("賭神上線")
 
-def allowed(ctx):
-    return ctx.channel.id == CHANNEL_ID
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    if message.channel.id != CHANNEL_ID:
+        return
 
-@bot.command()
-async def 賭(ctx):
-    global current_game
-    if not allowed(ctx):
-        return
-    if current_game:
-        await ctx.send("🇫🇷 賭神：急什麼？桌上還沒散。")
-        return
-    current_game = True
-    await ctx.send("🇫🇷 我要驗排")
-    await asyncio.sleep(2)
-    await ctx.send("🇫🇷 牌沒問題，開賭")
+    uid = message.author.id
+    content = message.content.strip()
 
-@bot.command()
-async def 加入(ctx):
-    if not allowed(ctx):
-        return
-    table.add(ctx.author.id)
-    uid = str(ctx.author.id)
-    if uid not in money:
-        money[uid] = 1000
-    await ctx.send(f"🇫🇷 {ctx.author.display_name} 入座")
+    if any(k in content for k in ["開始", "賭", "玩", "來"]):
+        nums = re.findall(r"\d+", content)
+        bet = int(nums[0]) if nums else 10
 
-@bot.command()
-async def 離開(ctx):
-    if not allowed(ctx):
-        return
-    table.discard(ctx.author.id)
-    await ctx.send(f"🇫🇷 {ctx.author.display_name} 離桌")
+        money = get_money(uid)
+        if money <= 0:
+            await message.channel.send(f"{message.author.mention} 你已經破產了，去跪著求賭神")
+            return
 
-@bot.command()
-async def 開桌(ctx):
-    global current_game
-    if not allowed(ctx):
-        return
-    if len(table) < 2:
-        await ctx.send("🇫🇷 人不夠，賭什麼？")
-        return
-    players = list(table)
-    loser = random.choice(players)
-    for p in players:
-        uid = str(p)
-        if uid not in money:
-            money[uid] = 1000
-    loss = random.randint(100, 500)
-    money[str(loser)] -= loss
-    loser_count[str(loser)] = loser_count.get(str(loser), 0) + loss
-    save_money()
-    member = ctx.guild.get_member(loser)
-    await ctx.send(f"🇫🇷 {member.display_name} 爆死，輸 {loss} 元")
-    current_game = False
+        if bet > money:
+            bet = money
 
-@bot.command()
-async def 資產(ctx):
-    if not allowed(ctx):
-        return
-    uid = str(ctx.author.id)
-    if uid not in money:
-        money[uid] = 0
-    await ctx.send(f"🇫🇷 你的資產：{money[uid]} 元")
+        add_money(uid, -bet)
 
-@bot.command()
-async def 誰最爛(ctx):
-    if not allowed(ctx):
-        return
-    if not loser_count:
-        await ctx.send("🇫🇷 還沒人夠爛")
-        return
-    worst = max(loser_count, key=loser_count.get)
-    member = ctx.guild.get_member(int(worst))
-    await ctx.send(f"🇫🇷 最爛的是 {member.display_name}，輸爆 {loser_count[worst]} 元")
+        player_score = draw_card() + draw_card()
+        dealer_score = draw_card() + draw_card()
 
-@bot.command()
-async def 排行榜(ctx):
-    if not allowed(ctx):
-        return
-    if not money:
-        await ctx.send("🇫🇷 沒人有錢")
-        return
-    ranking = sorted(money.items(), key=lambda x: x[1], reverse=True)
-    msg = "🇫🇷 資產排行榜\n"
-    for i,(uid,amt) in enumerate(ranking[:5],1):
-        member = ctx.guild.get_member(int(uid))
-        if member:
-            msg += f"{i}. {member.display_name} {amt} 元\n"
-    await ctx.send(msg)
+        result = f"{message.author.mention} 下注 {bet}\n你 {player_score} 點｜賭神 {dealer_score} 點\n"
 
-@bot.command()
-async def 發錢(ctx, amount:int):
-    if not allowed(ctx):
+        if player_score > 21:
+            record_loss(uid, bet)
+            await message.channel.send(result + "爆了，錢沒了，笑死")
+        elif dealer_score > 21 or player_score > dealer_score:
+            win = bet * 2
+            add_money(uid, win)
+            await message.channel.send(result + f"你贏了 {win}，但別太得意")
+        elif player_score < dealer_score:
+            record_loss(uid, bet)
+            await message.channel.send(result + "你輸了，賭神搖頭")
+        else:
+            add_money(uid, bet)
+            await message.channel.send(result + "平手，不代表你很強")
+
         return
-    if ctx.author.id != OWNER_ID:
-        await ctx.send("🇫🇷 你也敢印鈔？")
+
+    if "資產" in content:
+        await message.channel.send(f"{message.author.mention} 你現在剩 {get_money(uid)}")
         return
-    uid = str(ctx.author.id)
-    money[uid] = money.get(uid,0) + amount
-    save_money()
-    await ctx.send(f"🇫🇷 黑金入帳 +{amount} 元")
+
+    if any(k in content for k in ["給我錢", "加錢", "發錢"]):
+        if uid != OWNER_ID:
+            await message.channel.send("你也配跟賭神要錢？")
+            return
+        nums = re.findall(r"\d+", content)
+        if not nums:
+            await message.channel.send("你至少打個數字")
+            return
+        amt = int(nums[0])
+        add_money(uid, amt)
+        await message.channel.send(f"賭神不爽但還是給了你 {amt}")
+        return
+
+    if "排行榜" in content:
+        if not loss_board:
+            await message.channel.send("目前還沒人輸到值得紀念")
+            return
+        sorted_losers = sorted(loss_board.items(), key=lambda x: x[1], reverse=True)
+        text = "🏆 輸最多排行榜\n"
+        for i, (pid, amt) in enumerate(sorted_losers[:5], 1):
+            user = await bot.fetch_user(pid)
+            text += f"{i}. {user.name} 輸了 {amt}\n"
+        await message.channel.send(text)
+        return
 
 bot.run(TOKEN)
