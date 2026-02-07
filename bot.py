@@ -2,158 +2,112 @@ import discord
 from discord.ext import commands
 import os
 import random
-import asyncio
 
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="", intents=intents)
 
-TOKEN = os.environ.get("TOKEN")
-CHANNEL_ID = int(os.environ.get("CHANNEL_ID"))
+CHANNEL_ID = int(os.environ["CHANNEL_ID"])
+OWNER_ID = int(os.environ["OWNER_ID"])
 
-deck = [
-    ("A",11),("2",2),("3",3),("4",4),("5",5),("6",6),
-    ("7",7),("8",8),("9",9),("10",10),("J",10),("Q",10),("K",10)
-]
+cards = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"]
 
-coins = {}
-
-win_talk = [
-    "你以為你真的會贏？",
-    "這只是數學事故",
-    "我讓你有參與感而已"
-]
-
-lose_talk = [
-    "錢留下，人可以滾了",
-    "這桌是我的",
-    "賭之前沒拜法國賭神？"
-]
-
-humiliate = [
-    "輸成這樣你還敢再玩？",
-    "你剛剛那局真的很好笑",
-    "我會記住你的名字，當反面教材",
-    "給我擦皮鞋"
-]
+money = {}
+loss = {}
+used_relief = set()
+marked = set()
+table = set()
 
 @bot.event
 async def on_ready():
-    print("法國賭神已上桌")
+    print("法國賭神已上線")
 
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
-
     if message.channel.id != CHANNEL_ID:
         return
 
     uid = message.author.id
-    if uid not in coins:
-        coins[uid] = 1000
+    name = message.author.display_name
+    content = message.content.strip()
 
-    if message.content.startswith("餘額"):
-        await message.channel.send(f"{message.author.mention} 你剩下 {coins[uid]} 籌碼")
+    if uid not in money:
+        money[uid] = 100
+        loss[uid] = 0
+
+    if content == "入桌":
+        table.add(uid)
+        await message.channel.send(f"{name} 坐上賭桌")
         return
 
-    if not message.content.startswith("開始玩"):
+    if content == "離桌":
+        table.discard(uid)
+        await message.channel.send(f"{name} 離開賭桌")
         return
 
-    parts = message.content.split()
-    if len(parts) != 2 or not parts[1].isdigit():
-        await message.channel.send("格式錯誤，用：開始玩 金額")
-        return
-
-    bet = int(parts[1])
-
-    if bet <= 0:
-        await message.channel.send("你這是在賭空氣？")
-        return
-
-    if bet > coins[uid]:
-        await message.channel.send("你沒那麼多錢")
-        return
-
-    await message.channel.send("我要驗牌")
-    await asyncio.sleep(1)
-    await message.channel.send("牌沒問題")
-    await asyncio.sleep(1)
-
-    player_hand = []
-    dealer_hand = []
-
-    def draw():
-        return random.choice(deck)
-
-    def total(hand):
-        s = sum(c[1] for c in hand)
-        aces = sum(1 for c in hand if c[0] == "A")
-        while s > 21 and aces:
-            s -= 10
-            aces -= 1
-        return s
-
-    player_hand.extend([draw(), draw()])
-    dealer_hand.extend([draw(), draw()])
-
-    await message.channel.send(
-        f"你拿到 {player_hand[0][0]} {player_hand[1][0]} ｜ {total(player_hand)} 點"
-    )
-    await asyncio.sleep(1)
-    await message.channel.send(
-        f"法國賭神明牌 {dealer_hand[0][0]}"
-    )
-    await asyncio.sleep(1)
-
-    while total(player_hand) < 17:
-        await message.channel.send("你要牌")
-        await asyncio.sleep(1)
-        player_hand.append(draw())
-        await message.channel.send(
-            f"你補到 {player_hand[-1][0]} ｜ {total(player_hand)} 點"
-        )
-        await asyncio.sleep(1)
-        if total(player_hand) > 21:
-            coins[uid] -= bet
-            await message.channel.send("你爆了")
-            for t in humiliate:
-                await asyncio.sleep(1)
-                await message.channel.send(t)
+    if content == "開賭":
+        if len(table) < 2:
+            await message.channel.send("法國賭神：一個人賭？可悲")
             return
 
-    await message.channel.send("你停牌")
-    await asyncio.sleep(1)
+        results = {}
+        dealer = random.choice(cards)
+        await message.channel.send(f"法國賭神亮牌：{dealer}")
 
-    while total(dealer_hand) < 17:
-        dealer_hand.append(draw())
-        await asyncio.sleep(1)
+        for p in table:
+            draw = random.choice(cards)
+            results[p] = draw
+            await message.channel.send(f"<@{p}> 抽到 {draw}")
 
-    p = total(player_hand)
-    d = total(dealer_hand)
+        for p, draw in results.items():
+            if cards.index(draw) > cards.index(dealer):
+                money[p] += 100
+                if p in marked:
+                    await message.channel.send(f"<@{p}>：被救過還贏？我記住你了")
+                else:
+                    await message.channel.send(f"<@{p}> 贏了 +100")
+            elif cards.index(draw) < cards.index(dealer):
+                money[p] -= 100
+                loss[p] += 100
+                if p in marked:
+                    await message.channel.send(f"<@{p}>：爛命果然還是爛命")
+                else:
+                    await message.channel.send(f"<@{p}> 輸了 -100")
+            else:
+                await message.channel.send(f"<@{p}> 平手")
 
-    await message.channel.send(
-        f"法國賭神攤牌 {', '.join(c[0] for c in dealer_hand)} ｜ {d} 點"
-    )
-    await asyncio.sleep(1)
+        worst = max(loss, key=loss.get)
+        await message.channel.send(f"📢 全服公告：目前輸最慘的是 <@{worst}>，已輸 {loss[worst]}")
+        return
 
-    if d > 21 or p > d:
-        coins[uid] += bet
-        await message.channel.send("你贏了")
-        await message.channel.send(random.choice(win_talk))
-    elif p < d:
-        coins[uid] -= bet
-        await message.channel.send("你輸了")
-        for t in humiliate:
-            await asyncio.sleep(1)
-            await message.channel.send(t)
-    else:
-        await message.channel.send("平手")
-        await message.channel.send("平手也不代表你很強")
+    if content == "排行榜":
+        rank = sorted(loss.items(), key=lambda x: x[1], reverse=True)
+        text = "💀 輸最多排行榜\n"
+        for i,(u,l) in enumerate(rank[:5],1):
+            text += f"{i}. <@{u}>：{l}\n"
+        await message.channel.send(text)
+        return
 
-bot.run(TOKEN)
+    if content == "法國救濟":
+        if uid != OWNER_ID:
+            await message.channel.send("法國賭神：你不配")
+            return
+        if money[uid] > 0:
+            await message.channel.send("法國賭神：你還沒爛到底")
+            return
+        if uid in used_relief:
+            await message.channel.send("法國賭神：只救一次")
+            return
 
+        money[uid] = 1000
+        used_relief.add(uid)
+        marked.add(uid)
+        await message.channel.send("法國賭神：最後一次，別再讓我看到你破產")
+        return
 
+bot.run(os.environ["TOKEN"])
 
 
